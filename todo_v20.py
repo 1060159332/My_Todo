@@ -1120,7 +1120,7 @@ class TodoAppV20(QMainWindow):
             QMenu::item { padding: 6px 20px; border-radius: 4px; }
             QMenu::item:selected { background-color: #4CAF50; color: white; }
         """)
-        actions = [("不重复", None), ("每天", "daily"), ("每个工作日", "workdays"), ("每周", "weekly"), ("每月", "monthly"), ("每年", "yearly")]
+        actions = [("每天", "daily"), ("每个工作日", "workdays"), ("每周", "weekly"), ("每月", "monthly"), ("每年", "yearly")]
         for name, value in actions:
             action = QAction(name, self)
             action.triggered.connect(lambda checked, v=value, n=name: self.set_recurrence(v, n))
