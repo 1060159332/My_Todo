@@ -1,0 +1,5 @@
+{
+  "name": "GlassTodo Desktop",
+  "description": "A semi-transparent, minimal desktop to-do list application for Windows built with Python and PyQt6. Features drag-constraints, minimal mode, and local persistence.",
+  "requestFramePermissions": []
+}

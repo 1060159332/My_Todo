@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+```text
+# 忽略 Python 缓存
+__pycache__/
+*.py[cod]
+
+# 忽略打包生成的文件
+build/
+dist/
+*.spec
+
+# 忽略数据库 (保护你的隐私任务不被上传)
+*.db
+
+# 忽略虚拟环境
+venv/
+env/
