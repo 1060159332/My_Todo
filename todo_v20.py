@@ -411,6 +411,7 @@ class TaskWidget(QFrame):
         self.init_ui()
 
     def init_ui(self):
+        """ [UI修复] 初始化UI：移除所有硬编码颜色，改用 objectName 接管样式 """
         self.setObjectName("TaskRow")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -423,10 +424,13 @@ class TaskWidget(QFrame):
         content_layout.setSpacing(3)
         
         self.lbl_content = QLabel(self.content, parent=self)
+        self.lbl_content.setObjectName("TaskContent") # [新增] 设置ID以便CSS控制
         self.lbl_content.setWordWrap(True)
-        self.lbl_content.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.9); font-family: 'Segoe UI', sans-serif;")
+        # [修改] 仅设置字体，不再设置颜色
+        self.lbl_content.setStyleSheet("font-family: 'Segoe UI', sans-serif;")
         
         self.lbl_info = QLabel(parent=self)
+        self.lbl_info.setObjectName("TaskInfo") # [新增] 设置ID
         self.update_info_label()
         
         content_layout.addWidget(self.lbl_content)
@@ -442,12 +446,16 @@ class TaskWidget(QFrame):
         layout.addWidget(self.check_btn)
         layout.addLayout(content_layout, 1)
         layout.addWidget(self.del_btn)
+        
         self.update_visual_state()
 
     def update_info_label(self):
-        """ 更新任务下方的辅助信息（截止时间、重复图标） """
+        """ [UI修复] 更新信息标签：移除硬编码颜色，仅设置文字内容 """
         text_parts = []
-        style_color = "rgba(255,255,255,0.4)"
+        # 注意：这里不再定义 style_color 变量，颜色交由 apply_styles 处理
+        # 我们通过设置不同的 Property 来让 CSS 选择颜色
+        
+        is_overdue = False
         
         if self.deadline:
             try:
@@ -457,17 +465,15 @@ class TaskWidget(QFrame):
                 
                 if self.is_done:
                     time_str = f"{dt_dead.strftime('%m-%d')}"
-                    style_color = "rgba(255,255,255,0.2)"
                 else:
                     delta = dt_dead - dt_now
                     if delta.total_seconds() < 0:
                         time_str = f"已过期 {dt_dead.strftime('%m-%d %H:%M')}"
-                        style_color = "#FF5252"
+                        is_overdue = True
                     elif delta.days == 0:
                         hrs = int(delta.seconds / 3600)
                         mins = int((delta.seconds % 3600) / 60)
                         time_str = f"剩余 {hrs}小时{mins}分"
-                        style_color = "#FFC107"
                     else:
                         time_str = f"{dt_dead.strftime('%m-%d %H:%M')} 截止"
                 text_parts.append(time_str)
@@ -478,7 +484,11 @@ class TaskWidget(QFrame):
 
         if text_parts:
             self.lbl_info.setText("  ".join(text_parts))
-            self.lbl_info.setStyleSheet(f"color: {style_color}; font-size: 10px; font-weight: {'600' if style_color=='#FF5252' else 'normal'};")
+            # 设置动态属性，让主窗口的 apply_styles 捕捉
+            self.lbl_info.setProperty("is_overdue", is_overdue)
+            # 刷新样式
+            self.lbl_info.style().unpolish(self.lbl_info)
+            self.lbl_info.style().polish(self.lbl_info)
             self.lbl_info.show()
         else:
             self.lbl_info.hide()
@@ -489,14 +499,19 @@ class TaskWidget(QFrame):
         self.status_changed.emit(self.t_id, self.is_done)
 
     def update_visual_state(self):
-        """ 切换已完成/未完成的视觉效果（删除线、颜色变淡） """
+        """ [UI修复] 更新视觉状态：通过 Property 控制样式，而非直接 setStyleSheet """
+        # 设置动态属性
+        self.lbl_content.setProperty("is_done", self.is_done)
+        
+        # 刷新样式 (重要：通知 Qt 重新计算 CSS)
+        self.lbl_content.style().unpolish(self.lbl_content)
+        self.lbl_content.style().polish(self.lbl_content)
+        
+        # 字体删除线需要单独处理 (CSS很难完美处理删除线)
         font = self.lbl_content.font()
         font.setStrikeOut(self.is_done)
         self.lbl_content.setFont(font)
-        if self.is_done:
-            self.lbl_content.setStyleSheet("color: rgba(255,255,255,0.3);")
-        else:
-            self.lbl_content.setStyleSheet("color: rgba(255,255,255,0.9);")
+        
         self.update_info_label()
 
 # ==========================================
@@ -539,6 +554,55 @@ class TodoAppV20(QMainWindow):
         self.init_ui()
         self.setup_tray()
         self.load_tasks()
+
+    def get_theme_colors(self):
+        """ [UI修复] 精确计算背景亮度，决定文字颜色 """
+        try:
+            r, g, b = map(int, self.bg_color_rgb.split(','))
+            # 计算亮度 (Luma)，范围 0-255
+            brightness = (r * 0.299 + g * 0.587 + b * 0.114)
+            
+            # 提高阈值，确保浅色背景下一定用深色字
+            if brightness > 140: 
+                # --- 浅色模式 (Light Mode) ---
+                return {
+                    "text_main": "#222222",        # 主文字：深黑
+                    "text_sub": "#555555",         # 副文字：深灰
+                    "text_done": "#999999",        # 完成文字：浅灰
+                    "capsule_bg": "rgba(0, 0, 0, 0.05)", # 输入框：极淡黑底
+                    "hover_bg": "rgba(0, 0, 0, 0.1)",
+                    "border": "rgba(0, 0, 0, 0.1)",
+                    "icon_normal": "#444444",
+                    # 日历专用色
+                    "cal_bg": f"rgb({r},{g},{b})", # 与主窗口同色
+                    "cal_text": "#000000",
+                    "cal_btn_hover": "rgba(0,0,0,0.1)",
+                    "input_bg": "rgba(0,0,0,0.05)"
+                }
+            else:
+                # --- 深色模式 (Dark Mode) ---
+                return {
+                    "text_main": "rgba(255, 255, 255, 0.95)",
+                    "text_sub": "rgba(255, 255, 255, 0.6)",
+                    "text_done": "rgba(255, 255, 255, 0.3)",
+                    "capsule_bg": "rgba(255, 255, 255, 0.1)",
+                    "hover_bg": "rgba(255, 255, 255, 0.15)",
+                    "border": "rgba(255, 255, 255, 0.1)",
+                    "icon_normal": "#dddddd",
+                    # 日历专用色
+                    "cal_bg": f"rgb({r},{g},{b})",
+                    "cal_text": "#ffffff",
+                    "cal_btn_hover": "rgba(255,255,255,0.1)",
+                    "input_bg": "rgba(255,255,255,0.1)"
+                }
+        except:
+            # 兜底默认深色
+            return {
+                "text_main": "white", "text_sub": "#ccc", "text_done": "#555",
+                "capsule_bg": "rgba(255,255,255,0.1)", "hover_bg": "rgba(255,255,255,0.1)",
+                "border": "rgba(255,255,255,0.1)", "icon_normal": "#ccc", 
+                "cal_bg": "#333", "cal_text": "white", "cal_btn_hover": "#444", "input_bg": "#444"
+            }
 
     def init_ui(self):
         self.resize(390, 700)
@@ -958,8 +1022,10 @@ class TodoAppV20(QMainWindow):
 
     def setup_settings_panel(self):
         self.settings_panel = QFrame()
+        self.settings_panel.setObjectName("SettingsPanel") # [新增] 设置ID
         self.settings_panel.setVisible(False)
-        self.settings_panel.setStyleSheet("background-color: rgba(0,0,0,0.15); border-bottom: 1px solid rgba(255,255,255,0.05);")
+        # [删除] 下面这行旧代码，它导致了背景锁死为黑色
+        # self.settings_panel.setStyleSheet("background-color: rgba(0,0,0,0.15); ...") 
         
         layout = QVBoxLayout(self.settings_panel)
         layout.setContentsMargins(20, 15, 20, 15)
@@ -1176,42 +1242,271 @@ class TodoAppV20(QMainWindow):
             self.apply_styles()
 
     def show_date_picker(self):
+        """ 
+        [V4 绝地反击版] 
+        1. 根治黑洞：放弃全透明，使用主题色进行物理覆盖，彻底消灭黑色背景。
+        2. 交互升级：点击顶部标题可直接弹出菜单选择年份和月份。
+        3. 时间优化：支持鼠标滚轮调整时间，增加“此刻”按钮。
+        """
         dialog = QDialog(self)
         dialog.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setStyleSheet("background: #2b2b2b; border: 1px solid #444; border-radius: 8px;")
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) 
+        
+        theme = self.get_theme_colors()
+        
+        # --- 颜色计算 (关键修复) ---
+        # 既然透明会透出黑色，我们就用实色背景！
+        # 提取 RGB
+        try:
+            r, g, b = map(int, self.bg_color_rgb.split(','))
+        except:
+            r, g, b = 240, 240, 245 # 浅色兜底
+
+        # 计算一个不透明的背景色 (Opacity 255) 用于覆盖日历黑底
+        solid_bg_hex = QColor(r, g, b).name()
+        
+        # 窗口大背景稍微透一点点 (250)，保持质感
+        bg_rgba = f"rgba({r}, {g}, {b}, 250)"
+        
+        # 判断深浅模式，决定文字颜色
+        is_dark = QColor(r,g,b).lightness() < 128
+        text_color = "#FFFFFF" if is_dark else "#222222"
+        sub_text_color = "rgba(255,255,255,0.6)" if is_dark else "rgba(0,0,0,0.6)"
+        active_color = "#4CAF50" # 品牌绿
+        hover_bg = "rgba(255,255,255,0.1)" if is_dark else "rgba(0,0,0,0.05)"
+
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(5,5,5,5)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # === 1. 外层容器 ===
+        container = QFrame()
+        container.setObjectName("CalContainer")
+        # 这里的 background-color 必须足够不透明
+        container.setStyleSheet(f"""
+            #CalContainer {{
+                background-color: {bg_rgba};
+                border: 1px solid {theme['border']};
+                border-radius: 12px;
+            }}
+        """)
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(10)
+        layout.addWidget(container)
+        
+        # === 2. 顶部导航 (带菜单功能) ===
+        nav_layout = QHBoxLayout()
+        
+        def create_nav_btn(text):
+            btn = QPushButton(text)
+            btn.setFixedSize(28, 28)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {text_color};
+                    border: 1px solid {theme['border']}; border-radius: 14px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{ background-color: {active_color}; color: white; border: none; }}
+            """)
+            return btn
+            
+        self.btn_prev_month = create_nav_btn("◀")
+        self.btn_next_month = create_nav_btn("▶")
+        
+        # 中间的标题按钮 (可点击！)
+        self.btn_date_title = QPushButton()
+        self.btn_date_title.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_date_title.setFlat(True)
+        self.btn_date_title.setStyleSheet(f"""
+            QPushButton {{
+                color: {text_color}; font-size: 16px; font-weight: bold; 
+                border: none; background: transparent; padding: 4px 8px; border-radius: 4px;
+            }}
+            QPushButton:hover {{ background-color: {hover_bg}; }}
+        """)
+        
+        nav_layout.addWidget(self.btn_prev_month)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.btn_date_title)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.btn_next_month)
+        
+        main_layout.addLayout(nav_layout)
+        
+        # === 3. 日历控件 (强制覆盖颜色) ===
         cal = QCalendarWidget()
+        cal.setNavigationBarVisible(False)
         cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        cal.setStyleSheet("QCalendarWidget QWidget { color: #ddd; alternate-background-color: #333; } QAbstractItemView:enabled { color: white; background: #2b2b2b; selection-background-color: #4CAF50; border-radius: 4px;} QMenu { color: white; background: #333; } QSpinBox { color: white; background: #444; border-radius: 4px; } QToolButton { color: white; background: transparent; icon-size: 16px; outline: none; } QToolButton:hover { background: #444; border-radius: 4px; }")
+        cal.setGridVisible(False)
+        
+        # 【关键 CSS】强制所有子控件使用 solid_bg_hex (实色)，绝对不透出黑色
+        cal.setStyleSheet(f"""
+            QCalendarWidget {{ background-color: transparent; }}
+            QCalendarWidget QWidget {{ alternate-background-color: {solid_bg_hex}; }}
+            
+            /* 强制覆盖 QTableView 的背景，防止黑洞 */
+            QCalendarWidget QTableView {{
+                background-color: {solid_bg_hex}; 
+                color: {text_color};
+                selection-background-color: {active_color};
+                selection-color: white;
+                border: none;
+                outline: none;
+            }}
+            
+            /* 悬停和选中样式 */
+            QCalendarWidget QAbstractItemView:item:hover {{
+                background-color: {hover_bg};
+                border-radius: 4px;
+            }}
+            QCalendarWidget QAbstractItemView:item:selected {{
+                background-color: {active_color};
+                border-radius: 4px;
+                color: white;
+            }}
+        """)
+        main_layout.addWidget(cal)
+        
+        # --- 逻辑部分 ---
+        
+        def update_title():
+            d = cal.selectedDate()
+            # 显示格式：Dec 2025
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            self.btn_date_title.setText(f"{month_names[d.month()-1]} {d.year()}")
+            
+        def show_jump_menu():
+            """ 点击标题弹出的快速跳转菜单 """
+            menu = QMenu(dialog)
+            # 菜单样式美化
+            menu_bg = "#333333" if is_dark else "#FFFFFF"
+            menu_text = "#FFFFFF" if is_dark else "#000000"
+            menu.setStyleSheet(f"""
+                QMenu {{ background-color: {menu_bg}; border: 1px solid {theme['border']}; border-radius: 8px; padding: 5px; }}
+                QMenu::item {{ color: {menu_text}; padding: 5px 20px; border-radius: 4px; }}
+                QMenu::item:selected {{ background-color: {active_color}; color: white; }}
+            """)
+            
+            current_date = cal.selectedDate()
+            
+            # 添加月份
+            month_menu = menu.addMenu("月份")
+            month_menu.setStyleSheet(menu.styleSheet())
+            month_names = ["01 Jan", "02 Feb", "03 Mar", "04 Apr", "05 May", "06 Jun", 
+                           "07 Jul", "08 Aug", "09 Sep", "10 Oct", "11 Nov", "12 Dec"]
+            for i, m_name in enumerate(month_names):
+                action = month_menu.addAction(m_name)
+                action.triggered.connect(lambda checked, m=i+1: set_month(m))
+
+            menu.addSeparator()
+
+            # 添加年份 (前后5年)
+            curr_year = current_date.year()
+            for y in range(curr_year - 2, curr_year + 4):
+                action = menu.addAction(str(y))
+                action.triggered.connect(lambda checked, year=y: set_year(year))
+                
+            menu.exec(QCursor.pos())
+
+        def set_month(m):
+            d = cal.selectedDate()
+            cal.setSelectedDate(QDateTime(d.year(), m, d.day(), 0, 0).date())
+            update_title()
+
+        def set_year(y):
+            d = cal.selectedDate()
+            cal.setSelectedDate(QDateTime(y, d.month(), d.day(), 0, 0).date())
+            update_title()
+            
+        # 连接信号
+        self.btn_prev_month.clicked.connect(lambda: (cal.showPreviousMonth(), update_title()))
+        self.btn_next_month.clicked.connect(lambda: (cal.showNextMonth(), update_title()))
+        cal.selectionChanged.connect(update_title)
+        cal.currentPageChanged.connect(lambda y, m: update_title())
+        self.btn_date_title.clicked.connect(show_jump_menu) # 绑定菜单
+        
+        update_title()
+
+        # === 4. 时间选择 (带滚轮和一键重置) ===
+        time_capsule = QFrame()
+        time_capsule.setStyleSheet(f"background-color: {theme['capsule_bg']}; border-radius: 8px;")
+        time_layout = QHBoxLayout(time_capsule)
+        time_layout.setContentsMargins(10, 5, 10, 5)
+        
+        lbl_now = QPushButton("此刻")
+        lbl_now.setCursor(Qt.CursorShape.PointingHandCursor)
+        lbl_now.setToolTip("重置为当前时间")
+        lbl_now.setStyleSheet(f"""
+            QPushButton {{ color: {active_color}; border: 1px solid {active_color}; border-radius: 4px; padding: 2px 6px; font-size: 11px; background: transparent; }}
+            QPushButton:hover {{ background-color: {active_color}; color: white; }}
+        """)
+        
         time_edit = QTimeEdit()
         time_edit.setDisplayFormat("HH:mm")
         time_edit.setTime(QDateTime.currentDateTime().time())
-        time_edit.setStyleSheet("color: white; background: #444; border: none; padding: 4px; border-radius: 4px;")
+        time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        time_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 支持滚轮，去边框
+        time_edit.setStyleSheet(f"""
+            QTimeEdit {{
+                color: {text_color}; background: transparent; border: none;
+                font-size: 20px; font-weight: bold; font-family: 'Segoe UI';
+            }}
+            QTimeEdit::up-button, QTimeEdit::down-button {{ width: 0px; border: none; }}
+        """)
+        
+        lbl_now.clicked.connect(lambda: time_edit.setTime(QDateTime.currentDateTime().time()))
+        
+        time_layout.addWidget(QLabel("⏰"))
+        time_layout.addWidget(time_edit, 1)
+        time_layout.addWidget(lbl_now)
+        
+        main_layout.addWidget(time_capsule)
+
+        # === 5. 底部按钮 ===
         btn_layout = QHBoxLayout()
-        ok_btn = QPushButton("确定")
-        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        ok_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        ok_btn.setStyleSheet("background: #4CAF50; color: white; border: none; padding: 6px; border-radius: 4px; font-weight: bold;")
-        clear_btn = QPushButton("清除")
-        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        clear_btn.setStyleSheet("background: #555; color: white; border: none; padding: 6px; border-radius: 4px;")
-        ok_btn.clicked.connect(dialog.accept)
-        clear_btn.clicked.connect(lambda: dialog.done(2))
-        btn_layout.addWidget(clear_btn)
-        btn_layout.addWidget(ok_btn)
-        layout.addWidget(cal)
-        layout.addWidget(time_edit)
-        layout.addLayout(btn_layout)
+        btn_layout.setSpacing(10)
+        
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {sub_text_color}; background: transparent;
+                border: 1px solid {theme['border']}; border-radius: 6px; padding: 6px;
+            }}
+            QPushButton:hover {{ background-color: {hover_bg}; color: {text_color}; }}
+        """)
+        
+        confirm_btn = QPushButton("确定")
+        confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {active_color}; color: white;
+                border: none; border-radius: 6px; padding: 6px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #45a049; }}
+        """)
+        
+        cancel_btn.clicked.connect(lambda: dialog.done(2))
+        confirm_btn.clicked.connect(dialog.accept)
+        
+        btn_layout.addWidget(cancel_btn, 1)
+        btn_layout.addWidget(confirm_btn, 2)
+        main_layout.addLayout(btn_layout)
+        
+        # === 窗口定位 ===
         screen_geo = self.screen().availableGeometry()
         cursor_pos = QCursor.pos()
-        dialog_w, dialog_h = 260, 260
-        x = cursor_pos.x()
-        y = cursor_pos.y()
-        if x + dialog_w > screen_geo.right(): x = screen_geo.right() - dialog_w - 10
-        if y + dialog_h > screen_geo.bottom(): y = screen_geo.bottom() - dialog_h - 10
-        dialog.move(x, y)
+        w, h = 300, 400
+        x = cursor_pos.x() - w // 2
+        y = cursor_pos.y() + 20
+        if x + w > screen_geo.right(): x = screen_geo.right() - w - 10
+        if x < screen_geo.left(): x = screen_geo.left() + 10
+        if y + h > screen_geo.bottom(): y = screen_geo.bottom() - h - 10
+        dialog.setGeometry(x, y, w, h)
+        
+        # === 运行 ===
         res = dialog.exec()
         if res == 1:
             date = cal.selectedDate()
@@ -1226,6 +1521,7 @@ class TodoAppV20(QMainWindow):
             self.lbl_deadline_preview.setText("")
             self.date_btn.setProperty("has_date", "false")
             self.date_btn.setToolTip("设置截止时间")
+            
         self.date_btn.style().unpolish(self.date_btn)
         self.date_btn.style().polish(self.date_btn)
 
@@ -1259,25 +1555,74 @@ class TodoAppV20(QMainWindow):
             self.resize(self.width(), h)
 
     def apply_styles(self):
+        """ [UI修复] 样式表重构：移除设置面板黑框，统一文字颜色 """
+        theme = self.get_theme_colors()
+        
         self.setStyleSheet(f"""
-            #Container {{ background-color: rgba({self.bg_color_rgb}, {self.opacity_val}); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08); }}
-            #TitleBtn {{ background: transparent; border-radius: 5px; color: rgba(255,255,255,0.6); font-size: 14px; outline: none; }}
-            #TitleBtn:hover {{ background: rgba(255,255,255,0.1); color: white; }}
-            #CloseBtn {{ background: transparent; border-radius: 5px; color: rgba(255,255,255,0.6); font-size: 14px; outline: none; }}
+            /* 全局重置 */
+            QWidget {{ color: {theme['text_main']}; }}
+            
+            /* 主容器 */
+            #Container {{
+                background-color: rgba({self.bg_color_rgb}, {self.opacity_val});
+                border-radius: 16px;
+                border: 1px solid {theme['border']};
+            }}
+            
+            /* 设置面板：关键修复！背景透明，边框透明 */
+            #SettingsPanel {{
+                background-color: transparent; 
+                border-bottom: 1px solid {theme['border']};
+                border-radius: 0px; 
+            }}
+            
+            /* 确保所有 Label 背景透明 */
+            QLabel {{ background-color: transparent; color: {theme['text_main']}; }}
+            
+            /* 标题栏按钮 */
+            #TitleBtn {{ background: transparent; border-radius: 5px; color: {theme['text_sub']}; outline: none; }}
+            #TitleBtn:hover {{ background: {theme['hover_bg']}; color: {theme['text_main']}; }}
+            #CloseBtn {{ background: transparent; border-radius: 5px; color: {theme['text_sub']}; outline: none; }}
             #CloseBtn:hover {{ background: #FF5252; color: white; }}
-            #InputCapsule {{ background-color: rgba(0, 0, 0, 0.25); border-radius: 20px; border: 1px solid rgba(255,255,255,8); }}
-            #AddBtn {{ background-color: rgba(255,255,255,0.9); color: black; border-radius: 14px; font-weight: bold; font-size: 16px; outline: none; }}
-            #AddBtn:hover {{ background-color: white; }}
-            #DateBtn {{ background: transparent; border: none; font-size: 16px; color: #888; outline: none; }}
-            #DateBtn:hover {{ color: white; }}
+            
+            /* 输入框胶囊 */
+            #InputCapsule {{ 
+                background-color: {theme['capsule_bg']}; 
+                border-radius: 20px; 
+                border: 1px solid {theme['border']}; 
+            }}
+            QLineEdit {{ border: none; color: {theme['text_main']}; background: transparent; font-size: 13px; }}
+            
+            /* 任务列表 */
+            #TaskRow {{ 
+                background-color: {theme['capsule_bg']}; 
+                border-radius: 12px; 
+                border: 1px solid {theme['border']}; 
+            }}
+            #TaskRow:hover {{ background-color: {theme['hover_bg']}; }}
+            
+            /* 任务文字颜色控制 */
+            #TaskContent {{ color: {theme['text_main']}; background: transparent; }}
+            #TaskContent[is_done="true"] {{ color: {theme['text_done']}; }}
+            
+            #TaskInfo {{ color: {theme['text_sub']}; background: transparent; font-size: 10px; }}
+            #TaskInfo[is_overdue="true"] {{ color: #FF5252; font-weight: bold; }}
+            
+            /* 按钮 */
+            #AddBtn {{ background-color: {theme['text_main']}; color: rgba({self.bg_color_rgb}, 1); border-radius: 14px; font-weight: bold; font-size: 16px; outline: none; }}
+            #AddBtn:hover {{ opacity: 0.8; }}
+            
+            #DateBtn, #RepeatBtn {{ background: transparent; border: none; font-size: 16px; color: {theme['icon_normal']}; outline: none; padding: 0px; text-align: center; }}
+            #DateBtn:hover, #RepeatBtn:hover {{ color: {theme['text_main']}; }}
             #DateBtn[has_date="true"] {{ color: #4CAF50; }}
-            #TaskRow {{ background-color: rgba(255, 255, 255, 0.04); border-radius: 12px; border: 1px solid rgba(255,255,255,5); }}
-            #TaskRow:hover {{ background-color: rgba(255, 255, 255, 0.08); }}
-            #DeleteBtn {{ color: #666; background: transparent; border: none; font-weight: bold; font-size: 14px; outline: none; }}
+            
+            #DeleteBtn {{ color: {theme['text_sub']}; background: transparent; border: none; font-weight: bold; font-size: 14px; outline: none; }}
             #DeleteBtn:hover {{ color: #FF5252; }}
+            
+            /* 滚动条 */
             QScrollBar:vertical {{ width: 6px; background: transparent; }}
-            QScrollBar::handle:vertical {{ background: rgba(255,255,255,0.15); border-radius: 3px; }}
-            QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.25); }}
+            QScrollBar::handle:vertical {{ background: {theme['border']}; border-radius: 3px; }}
+            QScrollBar::handle:vertical:hover {{ background: {theme['icon_normal']}; }}
         """)
 
     def update_mini_display(self, task):
